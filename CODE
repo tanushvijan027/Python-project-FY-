@@ -1,0 +1,223 @@
+import pandas as pd
+
+def mark_attendance(subject, student):
+    print("\nSubjects:", ", ".join(subject.keys()))
+    subject_name = input("Which subject attendance you want to mark: ").strip().lower()
+
+    if subject_name not in subject:
+        print("Invalid subject name. Please try again.")
+        return subject, student
+
+    while True:
+        ds = input("Input the date and slot (e.g., YYYY-MM-DD Morning): ").split()
+        if len(ds) != 2:
+            print("Invalid format. Please enter in 'YYYY-MM-DD Slot' format.")
+            continue
+        date, slot = ds[0], ds[1]
+        conflict = False
+        for sub in subject:
+            for d, s in zip(subject[sub]["date"], subject[sub]["slot"]):
+                if d == date and s == slot:
+                    print(f"Conflict! {sub} already has a lecture on {date} ({slot}).")
+                    conflict = True
+                    break
+            if conflict:
+                break
+        if not conflict:
+            break
+
+    subject[subject_name]["lecture"] += 1
+    subject[subject_name]["date"].append(date)
+    subject[subject_name]["slot"].append(slot)
+
+    absent_list = list(map(int, input("Enter absent student numbers: ").split()))
+    present_list = []
+    for sid in student:
+        if sid not in absent_list:
+            student[sid][subject_name] += 1
+            present_list.append(sid)
+
+    if "log" not in subject[subject_name]:
+        subject[subject_name]["log"] = []
+    subject[subject_name]["log"].append({
+        "date": date,
+        "slot": slot,
+        "present": present_list,
+        "absent": absent_list
+    })
+
+    print(f"Attendance marked for {subject_name}.")
+    return subject, student
+
+
+def display_attendance(subject, student):
+    choice = input("Display attendance subject-wise or overall? (subject/overall): ").strip().lower()
+    if choice == "subject":
+        subject_name = input("Enter subject name: ").lower()
+        if subject_name not in subject:
+            print("Invalid subject name.")
+            return
+        total = subject[subject_name]["lecture"]
+        for sid in student:
+            attended = student[sid][subject_name]
+            percent = (attended / total) * 100 if total > 0 else 0
+            print(f"{sid}) {student[sid]['name']}: {percent:.2f}%")
+    elif choice == "overall":
+        total_lectures = sum(subject[sub]["lecture"] for sub in subject)
+        for sid in student:
+            attended = sum(student[sid][sub] for sub in subject)
+            percent = (attended / total_lectures) * 100 if total_lectures > 0 else 0
+            print(f"{sid}) {student[sid]['name']}: {percent:.2f}%")
+
+
+def edit_attendance(subject, student):
+    subject_name = input("Enter subject name to edit: ").lower()
+    if subject_name not in subject:
+        print("Invalid subject name.")
+        return
+    date = input("Enter the date of the attendance to edit (YYYY-MM-DD): ")
+    if date not in subject[subject_name]["date"]:
+        print("No attendance recorded on that date.")
+        return
+
+    index = subject[subject_name]["date"].index(date)
+    slot = subject[subject_name]["slot"][index]
+
+    log = subject[subject_name].get("log", [])
+    entry = None
+    for record in log:
+        if record["date"] == date and record["slot"] == slot:
+            entry = record
+            break
+
+    if not entry:
+        print("No log entry found.")
+        return
+
+    print("Current absentees:", entry["absent"])
+    updated_absent = list(map(int, input("Enter updated absent student numbers: ").split()))
+
+    for sid in student:
+        was_present = sid in entry["present"]
+        is_now_absent = sid in updated_absent
+
+        if was_present and is_now_absent:
+            student[sid][subject_name] = max(0, student[sid][subject_name] - 1)
+        elif not was_present and not is_now_absent:
+            student[sid][subject_name] += 1
+
+    entry["absent"] = updated_absent
+    entry["present"] = [sid for sid in student if sid not in updated_absent]
+    print("Attendance updated.")
+
+
+def show_detained_list(subject, student, threshold=75):
+    total_lectures = sum(subject[sub]["lecture"] for sub in subject)
+    if total_lectures == 0:
+        print("No lectures conducted yet.")
+        return
+
+    print("Detained Students:")
+    detained = False
+    for sid in student:
+        attended = sum(student[sid][sub] for sub in subject)
+        percent = (attended / total_lectures) * 100
+        if percent < threshold:
+            print(f"{sid} {student[sid]['name']}: {percent:.2f}%")
+            detained = True
+    if not detained:
+        print("No students are detained.")
+
+
+def export_attendance_to_excel(subject, student, filename="attendance.xlsx"):
+    # Create attendance data for all students
+    data = []
+    total_lectures = sum(subject[sub]["lecture"] for sub in subject)
+    for sid in student:
+        row = {
+            "Roll No": sid,
+            "Name": student[sid]["name"]
+        }
+        attended_total = 0
+        for sub in subject:
+            attended = student[sid][sub]
+            row[sub.capitalize()] = attended
+            attended_total += attended
+        row["Overall %"] = round((attended_total / total_lectures) * 100, 2) if total_lectures else 0
+        data.append(row)
+
+    # Create detained list data (students with <75% attendance)
+    detained_data = []
+    for sid in student:
+        attended_total = sum(student[sid][sub] for sub in subject)
+        percent = round((attended_total / total_lectures) * 100, 2) if total_lectures else 0
+        if percent < 75:
+            detained_row = {
+                "Roll No": sid,
+                "Name": student[sid]["name"],
+                "Overall %": percent
+            }
+            detained_data.append(detained_row)
+
+    # Create Excel writer object
+    with pd.ExcelWriter(filename) as writer:
+        # Write main attendance sheet
+        df = pd.DataFrame(data)
+        df.to_excel(writer, sheet_name="Attendance", index=False)
+        
+        # Write detained list sheet
+        if detained_data:
+            detained_df = pd.DataFrame(detained_data)
+            detained_df.to_excel(writer, sheet_name="Detained List", index=False)
+        else:
+            # Create empty sheet if no detained students
+            pd.DataFrame(["No students detained (all have ≥75% attendance)"]).to_excel(
+                writer, sheet_name="Detained List", index=False, header=False)
+
+    print(f"Attendance exported to {filename} with two sheets using pandas.")
+
+
+def menu(subject, student):
+    while True:
+        print("\nMenu:")
+        print("1. Mark Attendance")
+        print("2. View Attendance")
+        print("3. Edit Attendance")
+        print("4. Show Detained List")
+        print("5. Export to Excel (.xlsx)")
+        print("6. Exit")
+        choice = input("Enter your choice: ").strip()
+
+        if choice == '1':
+            subject, student = mark_attendance(subject, student)
+        elif choice == '2':
+            display_attendance(subject, student)
+        elif choice == '3':
+            edit_attendance(subject, student)
+        elif choice == '4':
+            show_detained_list(subject, student)
+        elif choice == '5':
+            export_attendance_to_excel(subject, student)
+        elif choice == '6':
+            print("Exiting...")
+            break
+        else:
+            print("Invalid choice. Try again.")
+
+
+# Initialize Data with only 4 subjects (removed physics, chemistry, and Japanese)
+subject = {
+    "math": {"name": "aher sir", "lecture": 0, "date": [], "slot": []},
+    "fds": {"name": "dhanwate madam", "lecture": 0, "date": [], "slot": []},
+    "psp": {"name": "gawali madam", "lecture": 0, "date": [], "slot": []},
+    "english": {"name": "jayavelu sir", "lecture": 0, "date": [], "slot": []}
+}
+
+# Initialize student data with only the remaining subjects
+student = {i: {"name": name, **{sub: 0 for sub in subject}} for i, name in enumerate([
+    "Shubham", "Suraj", "Shreyash", "Manish", "Sarthak", "Anjali", "Rahul", "Pooja",
+    "Kiran", "Rohit", "Sneha", "Aditya", "Priya", "Akash", "Neha"
+], 1)}
+
+# Run the Program
+menu(subject, student)
